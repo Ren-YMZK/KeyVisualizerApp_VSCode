@@ -9,15 +9,21 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "keyvisualizerapp-vscode.helloWorld",
-        "title": "Hello World"
+    "configuration": {
+      "title": "Lecture Key Visualizer",
+      "properties": {
+        "lectureKeyVisualizer.endpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:43137/events",
+          "description": "Endpoint used to send visualizer events."
+        }
       }
-    ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

@@ -1,26 +1,57 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
+const DEFAULT_ENDPOINT = "http://127.0.0.1:43137/events";
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "keyvisualizerapp-vscode" is now active!');
+type VisualizerEvent = {
+  type: "file.saved";
+  id: string;
+  fileName: string;
+};
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('keyvisualizerapp-vscode.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from KeyVisualizerApp_VSCode!');
-	});
+async function postEvent(event: VisualizerEvent, endpoint: string) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(event),
+  });
 
-	context.subscriptions.push(disposable);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`failed to post event: ${response.status} ${text}`);
+  }
 }
 
-// This method is called when your extension is deactivated
+export function activate(context: vscode.ExtensionContext) {
+  const config = vscode.workspace.getConfiguration("lectureKeyVisualizer");
+  const endpoint = config.get<string>("endpoint") ?? DEFAULT_ENDPOINT;
+
+  const saveDisposable = vscode.workspace.onDidSaveTextDocument(
+    async (document) => {
+      try {
+        const fileName =
+          vscode.workspace.asRelativePath(document.uri, false) ||
+          document.fileName;
+
+        await postEvent(
+          {
+            type: "file.saved",
+            id: crypto.randomUUID(),
+            fileName,
+          },
+          endpoint,
+        );
+      } catch (error) {
+        console.error(
+          "lecture-key-visualizer: failed to send save event",
+          error,
+        );
+      }
+    },
+  );
+
+  context.subscriptions.push(saveDisposable);
+}
+
 export function deactivate() {}
