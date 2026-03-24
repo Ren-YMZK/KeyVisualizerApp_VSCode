@@ -14,10 +14,13 @@ function Send-VisualizerCommandEvent {
         return
     }
 
+    $cwd = $executionContext.SessionState.Path.CurrentLocation.Path
+
     $bodyObject = @{
         type    = "command.executed"
         id      = [guid]::NewGuid().ToString()
         command = $Command
+        cwd     = $cwd
     }
 
     $jsonBody = $bodyObject | ConvertTo-Json -Compress
