@@ -1,7 +1,7 @@
-function Send-VisualizerCommandEvent {
+function Send-VisualizerHttpEvent {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Command,
+        [hashtable]$Body,
 
         [string]$Endpoint = $env:KEY_VISUALIZER_ENDPOINT
     )
@@ -10,25 +10,57 @@ function Send-VisualizerCommandEvent {
         $Endpoint = "http://127.0.0.1:43137/events"
     }
 
+    $jsonBody = $Body | ConvertTo-Json -Compress
+
+    try {
+        Invoke-RestMethod -Method Post -Uri $Endpoint -ContentType "application/json" -Body $jsonBody | Out-Null
+    }
+    catch {
+    }
+}
+
+function Send-VisualizerCommandEvent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command
+    )
+
     if ([string]::IsNullOrWhiteSpace($Command)) {
         return
     }
 
     $cwd = $executionContext.SessionState.Path.CurrentLocation.Path
 
-    $bodyObject = @{
+    Send-VisualizerHttpEvent -Body @{
         type    = "command.executed"
         id      = [guid]::NewGuid().ToString()
         command = $Command
         cwd     = $cwd
     }
+}
 
-    $jsonBody = $bodyObject | ConvertTo-Json -Compress
+function Send-VisualizerCompletionEvent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Before,
 
-    try {
-        Invoke-RestMethod -Method Post -Uri $Endpoint -ContentType "application/json" -Body $jsonBody | Out-Null
+        [Parameter(Mandatory = $true)]
+        [string]$After
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Before) -or [string]::IsNullOrWhiteSpace($After)) {
+        return
     }
-    catch {
+
+    if ($Before -eq $After) {
+        return
+    }
+
+    Send-VisualizerHttpEvent -Body @{
+        type   = "completion.accepted"
+        id     = [guid]::NewGuid().ToString()
+        before = $Before
+        after  = $After
     }
 }
 
@@ -56,4 +88,34 @@ function global:prompt {
     }
 
     "PS $($executionContext.SessionState.Path.CurrentLocation)> "
+}
+
+if (Get-Module -Name PSReadLine) {
+    Set-PSReadLineKeyHandler -Key Tab -ScriptBlock {
+        param($key, $arg)
+
+        $before = $null
+        $beforeCursor = $null
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState(
+            [ref]$before,
+            [ref]$beforeCursor
+        )
+
+        [Microsoft.PowerShell.PSConsoleReadLine]::TabCompleteNext()
+
+        $after = $null
+        $afterCursor = $null
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState(
+            [ref]$after,
+            [ref]$afterCursor
+        )
+
+        if (
+            -not [string]::IsNullOrWhiteSpace($before) -and
+            -not [string]::IsNullOrWhiteSpace($after) -and
+            $before -ne $after
+        ) {
+            Send-VisualizerCompletionEvent -Before $before -After $after
+        }
+    }
 }
