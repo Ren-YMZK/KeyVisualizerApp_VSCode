@@ -2,11 +2,18 @@ import * as vscode from "vscode";
 
 const DEFAULT_ENDPOINT = "http://127.0.0.1:43137/events";
 
-type VisualizerEvent = {
-  type: "file.saved";
-  id: string;
-  fileName: string;
-};
+type VisualizerEvent =
+  | {
+      type: "file.saved";
+      id: string;
+      fileName: string;
+    }
+  | {
+      type: "editor.action";
+      id: string;
+      action: "openFile";
+      fileName: string;
+    };
 
 async function postEvent(event: VisualizerEvent, endpoint: string) {
   const response = await fetch(endpoint, {
@@ -23,6 +30,10 @@ async function postEvent(event: VisualizerEvent, endpoint: string) {
   }
 }
 
+function getDisplayFileName(uri: vscode.Uri): string {
+  return vscode.workspace.asRelativePath(uri, false) || uri.fsPath;
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration("lectureKeyVisualizer");
   const endpoint = config.get<string>("endpoint") ?? DEFAULT_ENDPOINT;
@@ -30,15 +41,11 @@ export function activate(context: vscode.ExtensionContext) {
   const saveDisposable = vscode.workspace.onDidSaveTextDocument(
     async (document) => {
       try {
-        const fileName =
-          vscode.workspace.asRelativePath(document.uri, false) ||
-          document.fileName;
-
         await postEvent(
           {
             type: "file.saved",
             id: crypto.randomUUID(),
-            fileName,
+            fileName: getDisplayFileName(document.uri),
           },
           endpoint,
         );
@@ -51,7 +58,30 @@ export function activate(context: vscode.ExtensionContext) {
     },
   );
 
-  context.subscriptions.push(saveDisposable);
+  const activeEditorDisposable = vscode.window.onDidChangeActiveTextEditor(
+    async (editor) => {
+      if (!editor) return;
+
+      try {
+        await postEvent(
+          {
+            type: "editor.action",
+            id: crypto.randomUUID(),
+            action: "openFile",
+            fileName: getDisplayFileName(editor.document.uri),
+          },
+          endpoint,
+        );
+      } catch (error) {
+        console.error(
+          "lecture-key-visualizer: failed to send open file event",
+          error,
+        );
+      }
+    },
+  );
+
+  context.subscriptions.push(saveDisposable, activeEditorDisposable);
 }
 
 export function deactivate() {}
