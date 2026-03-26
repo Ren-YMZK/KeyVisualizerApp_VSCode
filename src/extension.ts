@@ -20,6 +20,12 @@ type VisualizerEvent =
       id: string;
       before: string;
       after: string;
+    }
+  | {
+      type: "snippet.expanded";
+      id: string;
+      before: string;
+      after: string;
     };
 
 const documentSnapshotMap = new Map<string, string>();
@@ -77,7 +83,7 @@ function getLineTextFromContent(text: string, line: number): string {
   return lines[line] ?? "";
 }
 
-function shouldTreatAsCompletion(
+function isSnippetLikeChange(
   change: vscode.TextDocumentContentChangeEvent,
 ): boolean {
   if (change.text.length === 0) {
@@ -85,6 +91,28 @@ function shouldTreatAsCompletion(
   }
 
   if (change.text.includes("\n") || change.text.includes("\r")) {
+    return true;
+  }
+
+  if (change.range.start.line !== change.range.end.line) {
+    return true;
+  }
+
+  if (change.text.length >= 20) {
+    return true;
+  }
+
+  return false;
+}
+
+function shouldTreatAsCompletion(
+  change: vscode.TextDocumentContentChangeEvent,
+): boolean {
+  if (change.text.length === 0) {
+    return false;
+  }
+
+  if (isSnippetLikeChange(change)) {
     return false;
   }
 
@@ -92,7 +120,6 @@ function shouldTreatAsCompletion(
     return false;
   }
 
-  // 1文字だけの通常入力は除外
   if (change.text.length <= 1 && change.rangeLength === 0) {
     return false;
   }
@@ -121,7 +148,6 @@ function detectCompletionEvent(
     return null;
   }
 
-  // 変化量が小さすぎる普通の入力をなるべく除外
   const delta = Math.abs(newLine.length - oldLine.length);
   if (delta <= 1 && change.rangeLength === 0) {
     return null;
@@ -133,11 +159,48 @@ function detectCompletionEvent(
   };
 }
 
+function detectSnippetEvent(
+  document: vscode.TextDocument,
+  oldContent: string,
+  change: vscode.TextDocumentContentChangeEvent,
+): { before: string; after: string } | null {
+  if (!isSnippetLikeChange(change)) {
+    return null;
+  }
+
+  const startLine = change.range.start.line;
+  const endLine = Math.max(change.range.end.line, startLine);
+
+  const oldLines = oldContent.split(/\r?\n/);
+  const before = oldLines.slice(startLine, endLine + 1).join("\n");
+
+  const snippetLineCount = Math.max(change.text.split(/\r?\n/).length, 1);
+  const afterLines: string[] = [];
+
+  for (let i = 0; i < snippetLineCount; i += 1) {
+    const lineIndex = startLine + i;
+    if (lineIndex < document.lineCount) {
+      afterLines.push(document.lineAt(lineIndex).text);
+    }
+  }
+
+  const after = afterLines.join("\n");
+
+  if (!before && !after) {
+    return null;
+  }
+
+  if (before === after) {
+    return null;
+  }
+
+  return { before, after };
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration("lectureKeyVisualizer");
   const endpoint = config.get<string>("endpoint") ?? DEFAULT_ENDPOINT;
 
-  // 既に開いているドキュメントの初期スナップショット
   for (const document of vscode.workspace.textDocuments) {
     documentSnapshotMap.set(document.uri.toString(), document.getText());
   }
@@ -203,29 +266,44 @@ export function activate(context: vscode.ExtensionContext) {
 
       try {
         for (const change of event.contentChanges) {
+          const snippet = detectSnippetEvent(
+            event.document,
+            oldContent,
+            change,
+          );
+          if (snippet) {
+            await postEvent(
+              {
+                type: "snippet.expanded",
+                id: crypto.randomUUID(),
+                before: snippet.before,
+                after: snippet.after,
+              },
+              endpoint,
+            );
+            continue;
+          }
+
           const completion = detectCompletionEvent(
             event.document,
             oldContent,
             change,
           );
-
-          if (!completion) {
-            continue;
+          if (completion) {
+            await postEvent(
+              {
+                type: "completion.accepted",
+                id: crypto.randomUUID(),
+                before: completion.before,
+                after: completion.after,
+              },
+              endpoint,
+            );
           }
-
-          await postEvent(
-            {
-              type: "completion.accepted",
-              id: crypto.randomUUID(),
-              before: completion.before,
-              after: completion.after,
-            },
-            endpoint,
-          );
         }
       } catch (error) {
         console.error(
-          "lecture-key-visualizer: failed to send completion event",
+          "lecture-key-visualizer: failed to send editor change event",
           error,
         );
       } finally {
