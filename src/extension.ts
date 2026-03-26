@@ -14,7 +14,15 @@ type VisualizerEvent =
       id: string;
       action: "openFile";
       fileName: string;
+    }
+  | {
+      type: "completion.accepted";
+      id: string;
+      before: string;
+      after: string;
     };
+
+const documentSnapshotMap = new Map<string, string>();
 
 async function postEvent(event: VisualizerEvent, endpoint: string) {
   const response = await fetch(endpoint, {
@@ -59,9 +67,90 @@ function openVisualizerTerminal(context: vscode.ExtensionContext) {
   terminal.show();
 }
 
+function getLineTextFromContent(text: string, line: number): string {
+  const lines = text.split(/\r?\n/);
+
+  if (line < 0 || line >= lines.length) {
+    return "";
+  }
+
+  return lines[line] ?? "";
+}
+
+function shouldTreatAsCompletion(
+  change: vscode.TextDocumentContentChangeEvent,
+): boolean {
+  if (change.text.length === 0) {
+    return false;
+  }
+
+  if (change.text.includes("\n") || change.text.includes("\r")) {
+    return false;
+  }
+
+  if (change.range.start.line !== change.range.end.line) {
+    return false;
+  }
+
+  // 1文字だけの通常入力は除外
+  if (change.text.length <= 1 && change.rangeLength === 0) {
+    return false;
+  }
+
+  return true;
+}
+
+function detectCompletionEvent(
+  document: vscode.TextDocument,
+  oldContent: string,
+  change: vscode.TextDocumentContentChangeEvent,
+): { before: string; after: string } | null {
+  if (!shouldTreatAsCompletion(change)) {
+    return null;
+  }
+
+  const line = change.range.start.line;
+  const oldLine = getLineTextFromContent(oldContent, line);
+  const newLine = document.lineAt(line).text;
+
+  if (!oldLine || !newLine) {
+    return null;
+  }
+
+  if (oldLine === newLine) {
+    return null;
+  }
+
+  // 変化量が小さすぎる普通の入力をなるべく除外
+  const delta = Math.abs(newLine.length - oldLine.length);
+  if (delta <= 1 && change.rangeLength === 0) {
+    return null;
+  }
+
+  return {
+    before: oldLine,
+    after: newLine,
+  };
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration("lectureKeyVisualizer");
   const endpoint = config.get<string>("endpoint") ?? DEFAULT_ENDPOINT;
+
+  // 既に開いているドキュメントの初期スナップショット
+  for (const document of vscode.workspace.textDocuments) {
+    documentSnapshotMap.set(document.uri.toString(), document.getText());
+  }
+
+  const openDisposable = vscode.workspace.onDidOpenTextDocument((document) => {
+    documentSnapshotMap.set(document.uri.toString(), document.getText());
+  });
+
+  const closeDisposable = vscode.workspace.onDidCloseTextDocument(
+    (document) => {
+      documentSnapshotMap.delete(document.uri.toString());
+    },
+  );
 
   const saveDisposable = vscode.workspace.onDidSaveTextDocument(
     async (document) => {
@@ -106,14 +195,56 @@ export function activate(context: vscode.ExtensionContext) {
     },
   );
 
+  const changeDisposable = vscode.workspace.onDidChangeTextDocument(
+    async (event) => {
+      const uriKey = event.document.uri.toString();
+      const oldContent =
+        documentSnapshotMap.get(uriKey) ?? event.document.getText();
+
+      try {
+        for (const change of event.contentChanges) {
+          const completion = detectCompletionEvent(
+            event.document,
+            oldContent,
+            change,
+          );
+
+          if (!completion) {
+            continue;
+          }
+
+          await postEvent(
+            {
+              type: "completion.accepted",
+              id: crypto.randomUUID(),
+              before: completion.before,
+              after: completion.after,
+            },
+            endpoint,
+          );
+        }
+      } catch (error) {
+        console.error(
+          "lecture-key-visualizer: failed to send completion event",
+          error,
+        );
+      } finally {
+        documentSnapshotMap.set(uriKey, event.document.getText());
+      }
+    },
+  );
+
   const terminalCommandDisposable = vscode.commands.registerCommand(
     "keyvisualizerapp-vscode.openVisualizerTerminal",
     () => openVisualizerTerminal(context),
   );
 
   context.subscriptions.push(
+    openDisposable,
+    closeDisposable,
     saveDisposable,
     activeEditorDisposable,
+    changeDisposable,
     terminalCommandDisposable,
   );
 }
