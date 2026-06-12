@@ -18,6 +18,42 @@
       {
         "command": "keyvisualizerapp-vscode.openVisualizerTerminal",
         "title": "Open Key Visualizer Terminal"
+      },
+      {
+        "command": "keyvisualizerapp-vscode.showCommandPalette",
+        "title": "Show Command Palette (Key Visualizer)"
+      },
+      {
+        "command": "keyvisualizerapp-vscode.quickOpen",
+        "title": "Quick Open (Key Visualizer)"
+      },
+      {
+        "command": "keyvisualizerapp-vscode.formatDocument",
+        "title": "Format Document (Key Visualizer)"
+      },
+      {
+        "command": "keyvisualizerapp-vscode.goToDefinition",
+        "title": "Go to Definition (Key Visualizer)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "keyvisualizerapp-vscode.showCommandPalette",
+        "key": "ctrl+shift+p"
+      },
+      {
+        "command": "keyvisualizerapp-vscode.quickOpen",
+        "key": "ctrl+p"
+      },
+      {
+        "command": "keyvisualizerapp-vscode.formatDocument",
+        "key": "shift+alt+f",
+        "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "keyvisualizerapp-vscode.goToDefinition",
+        "key": "f12",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {

@@ -12,8 +12,13 @@ type VisualizerEvent =
   | {
       type: "editor.action";
       id: string;
-      action: "openFile";
-      fileName: string;
+      action:
+        | "openFile"
+        | "showCommandPalette"
+        | "quickOpen"
+        | "formatDocument"
+        | "goToDefinition";
+      fileName?: string;
     }
   | {
       type: "completion.accepted";
@@ -49,6 +54,12 @@ function getDisplayFileName(uri: vscode.Uri): string {
   return vscode.workspace.asRelativePath(uri, false) || uri.fsPath;
 }
 
+function getActiveFileName(): string | undefined {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return undefined;
+  return getDisplayFileName(editor.document.uri);
+}
+
 function openVisualizerTerminal(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration("lectureKeyVisualizer");
   const endpoint = config.get<string>("endpoint") ?? DEFAULT_ENDPOINT;
@@ -75,11 +86,9 @@ function openVisualizerTerminal(context: vscode.ExtensionContext) {
 
 function getLineTextFromContent(text: string, line: number): string {
   const lines = text.split(/\r?\n/);
-
   if (line < 0 || line >= lines.length) {
     return "";
   }
-
   return lines[line] ?? "";
 }
 
@@ -195,6 +204,26 @@ function detectSnippetEvent(
   }
 
   return { before, after };
+}
+
+async function postEditorAction(
+  endpoint: string,
+  action:
+    | "showCommandPalette"
+    | "quickOpen"
+    | "formatDocument"
+    | "goToDefinition",
+  fileName?: string,
+) {
+  await postEvent(
+    {
+      type: "editor.action",
+      id: crypto.randomUUID(),
+      action,
+      fileName,
+    },
+    endpoint,
+  );
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -317,6 +346,70 @@ export function activate(context: vscode.ExtensionContext) {
     () => openVisualizerTerminal(context),
   );
 
+  const commandPaletteDisposable = vscode.commands.registerCommand(
+    "keyvisualizerapp-vscode.showCommandPalette",
+    async () => {
+      try {
+        await postEditorAction(endpoint, "showCommandPalette");
+      } catch (error) {
+        console.error(
+          "lecture-key-visualizer: failed to send command palette event",
+          error,
+        );
+      }
+
+      await vscode.commands.executeCommand("workbench.action.showCommands");
+    },
+  );
+
+  const quickOpenDisposable = vscode.commands.registerCommand(
+    "keyvisualizerapp-vscode.quickOpen",
+    async () => {
+      try {
+        await postEditorAction(endpoint, "quickOpen");
+      } catch (error) {
+        console.error(
+          "lecture-key-visualizer: failed to send quick open event",
+          error,
+        );
+      }
+
+      await vscode.commands.executeCommand("workbench.action.quickOpen");
+    },
+  );
+
+  const formatDocumentDisposable = vscode.commands.registerCommand(
+    "keyvisualizerapp-vscode.formatDocument",
+    async () => {
+      try {
+        await postEditorAction(endpoint, "formatDocument", getActiveFileName());
+      } catch (error) {
+        console.error(
+          "lecture-key-visualizer: failed to send format document event",
+          error,
+        );
+      }
+
+      await vscode.commands.executeCommand("editor.action.formatDocument");
+    },
+  );
+
+  const goToDefinitionDisposable = vscode.commands.registerCommand(
+    "keyvisualizerapp-vscode.goToDefinition",
+    async () => {
+      try {
+        await postEditorAction(endpoint, "goToDefinition", getActiveFileName());
+      } catch (error) {
+        console.error(
+          "lecture-key-visualizer: failed to send go to definition event",
+          error,
+        );
+      }
+
+      await vscode.commands.executeCommand("editor.action.revealDefinition");
+    },
+  );
+
   context.subscriptions.push(
     openDisposable,
     closeDisposable,
@@ -324,6 +417,10 @@ export function activate(context: vscode.ExtensionContext) {
     activeEditorDisposable,
     changeDisposable,
     terminalCommandDisposable,
+    commandPaletteDisposable,
+    quickOpenDisposable,
+    formatDocumentDisposable,
+    goToDefinitionDisposable,
   );
 }
 
